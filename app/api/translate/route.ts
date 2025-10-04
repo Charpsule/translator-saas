@@ -8,67 +8,93 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-    const { text, target, source } = (await req.json()) as Body;
-
-    if (!text || !target) {
-        return NextResponse.json({ error: "text & target required" }, { status: 400 });
-    }
-
-    const provider = process.env.TRANSLATE_PROVIDER;
-
     try {
+        const { text, target, source } = (await req.json()) as Body;
+
+        if (!text || !target) {
+            return NextResponse.json(
+                { error: "text & target required" },
+                { status: 400 }
+            );
+        }
+
+        const provider = process.env.TRANSLATE_PROVIDER;
+
+        // ========== DeepL ==========
         if (provider === "deepl" && process.env.DEEPL_API_KEY) {
+            const params = new URLSearchParams({
+                text,
+                target_lang: target.toUpperCase(),
+            });
+            if (source) params.append("source_lang", source.toUpperCase());
+
             const r = await fetch("https://api-free.deepl.com/v2/translate", {
                 method: "POST",
                 headers: {
-                    "Authorization": `DeepL-Auth-Key ${process.env.DEEPL_API_KEY}`,
+                    Authorization: `DeepL-Auth-Key ${process.env.DEEPL_API_KEY}`,
                     "Content-Type": "application/x-www-form-urlencoded",
                 },
-                body: new URLSearchParams({
-                    text,
-                    target_lang: target.toUpperCase(), // e.g. ZH/EN/JA
-                    ...(source ? { source_lang: source.toUpperCase() } : {}),
-                }),
+                body: params.toString(),
             });
+
             const data = await r.json();
-            if (!r.ok) throw new Error(data?.message || "deepl error");
-            return NextResponse.json({ translation: data.translations?.[0]?.text ?? "" });
+            if (!r.ok) {
+                return NextResponse.json(
+                    { error: data?.message || "DeepL request failed" },
+                    { status: 502 }
+                );
+            }
+
+            const translated = data?.translations?.[0]?.text ?? "";
+            return NextResponse.json({ provider: "deepl", translated });
         }
 
+        // ========== OpenAI (fallback/provider) ==========
         if (provider === "openai" && process.env.OPENAI_API_KEY) {
-            const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
-            const prompt =
-                `Translate the following text into ${target}. Only output the translation, no explanations.\n\n` +
-                text;
+            const prompt = `Translate the following text into ${target}${
+                source ? ` from ${source}` : ""
+            }. Only return the translation:\n\n${text}`;
 
             const r = await fetch("https://api.openai.com/v1/chat/completions", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
-                    "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+                    Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
                 },
                 body: JSON.stringify({
-                    model,
+                    model: "gpt-4o-mini",
                     messages: [
-                        { role: "system", content: "You are a high-quality translation engine." },
+                        { role: "system", content: "You are a translation engine." },
                         { role: "user", content: prompt },
                     ],
-                    temperature: 0,
+                    temperature: 0.2,
                 }),
             });
+
             const data = await r.json();
-            if (!r.ok) throw new Error(data?.error?.message || "openai error");
-            const textOut = data.choices?.[0]?.message?.content?.trim() ?? "";
-            return NextResponse.json({ translation: textOut });
+            if (!r.ok) {
+                return NextResponse.json(
+                    { error: data?.error?.message || "OpenAI request failed" },
+                    { status: 502 }
+                );
+            }
+
+            const translated = data?.choices?.[0]?.message?.content?.trim() ?? "";
+            return NextResponse.json({ provider: "openai", translated });
         }
 
-        // Fallback：没配 Key 时仍然可用
-        const fake = `[${target}] ${text.toUpperCase()}`;
+        // ========== No provider configured: echo back ==========
         return NextResponse.json({
-            translation: fake,
-            note: "No provider configured; returned fake translation.",
+            provider: "noop",
+            translated: text,
+            note:
+                "No provider configured. Set TRANSLATE_PROVIDER=deepl or openai in .env.local",
         });
-    } catch (e: any) {
-        return NextResponse.json({ error: e.message || "translate failed" }, { status: 500 });
+    } catch (err) {
+        console.error(err);
+        return NextResponse.json(
+            { error: "Unexpected server error" },
+            { status: 500 }
+        );
     }
 }
