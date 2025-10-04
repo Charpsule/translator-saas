@@ -33,7 +33,8 @@ function isTranslateResponse(x: unknown): x is TranslateResponse {
     return typeof r.provider === "string" && typeof r.translated === "string";
 }
 
-export default function TranslatePage(): JSX.Element {
+// ✅ 这里去掉了显式返回类型 : JSX.Element
+export default function TranslatePage() {
     const [text, setText] = useState<string>("");
     const [target, setTarget] = useState<string>("EN");
     const [source, setSource] = useState<string>("");
@@ -91,7 +92,7 @@ export default function TranslatePage(): JSX.Element {
             setTranslated(data.translated);
             setProvider(data.provider);
             setNote(data.note ?? "");
-        } catch (err) {
+        } catch (_err) { // ✅ 变量改为 _err，避免 no-unused-vars
             setErrorMsg("Network error. Please try again.");
         } finally {
             setLoading(false);
